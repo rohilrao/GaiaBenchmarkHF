@@ -1,0 +1,99 @@
+# Data directories
+data/
+datasets/
+raw_data/
+processed_data/
+2023/
+cache/
+checkpoints/
+logs/
+
+# Large file formats that should be ignored
+*.csv
+*.tsv
+*.json
+*.npy
+*.npz
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.rar
+
+# Model checkpoints
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.model
+*.weights
+
+# Images and media files
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+*.mp3
+*.wav
+*.mp4
+*.avi
+*.mov
+*.MOV
+*.flac
+
+# Documents
+*.pdf
+*.xlsx
+*.docx
+*.pptx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Virtual environments
+venv/
+env/
+ENV/
+.env
+.venv
+env.bak/
+venv.bak/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.spyderproject
+.spyproject
+.ropeproject
