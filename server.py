@@ -17,7 +17,7 @@ def get_greeting(name: str) -> str:
 
 # 👇 ADD THIS to actually start the server
 if __name__ == "__main__":
-    transport = "sse":
+    transport = "sse"
     if transport == "stdio":
         print("Starting server with stdio transport...")
         mcp.run(transport=  "stdio")
