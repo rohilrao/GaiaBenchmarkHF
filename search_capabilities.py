@@ -8,6 +8,8 @@ from collections import defaultdict
 import logging
 from pydispatch import dispatcher
 from tqdm import tqdm
+import re
+import html
 
 class SearchSpider(scrapy.Spider):
     name = 'search_spider'
@@ -28,7 +30,7 @@ class SearchSpider(scrapy.Spider):
         crawler.signals.connect(spider.item_error, signal=signals.spider_error)
         return spider
     
-    def item_scraped(self, response, spider):
+    def item_scraped(self, item=None, response=None, spider=None):
         self.completed += 1
         self.progress_bar.update(1)
     
@@ -77,8 +79,16 @@ class SearchSpider(scrapy.Spider):
         # Store content with clean formatting
         self.parsed_content[title] = f"\nFrom {title}:\n{content}\n"
         
+        # Create a dummy item to satisfy the signal requirements
+        dummy_item = {}
+        
         # Signal that item has been scraped (for progress bar)
-        self.crawler.signals.send_catch_log(signal=signals.item_scraped, response=response, spider=self)
+        self.crawler.signals.send_catch_log(
+            signal=signals.item_scraped, 
+            item=dummy_item,
+            response=response, 
+            spider=self
+        )
     
     def handle_error(self, failure):
         request = failure.request
@@ -139,19 +149,43 @@ def search_and_parse(query, max_results=5):
     
     # Clean up the combined content
     combined_content = ''.join(spider_results.get('parsed_content', {}).values())
-    # Remove any consecutive newlines (more than 2)
-    lines = combined_content.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        if line.strip():  # Keep non-empty lines
-            cleaned_lines.append(line)
     
-    cleaned_content = '\n'.join(cleaned_lines)
+    # Apply HTML cleanup
+    cleaned_content = clean_html_content(combined_content)
     
     return {
         "search_results": results,
         "parsed_content": cleaned_content
     }
+
+def clean_html_content(text):
+    # Handle HTML entities
+    text = html.unescape(text)
+    
+    # Remove any remaining HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # Remove strange Unicode characters that might be from HTML
+    text = re.sub(r'[\u2028\u2029\ufeff]', ' ', text)
+    
+    # Fix common formatting issues
+    text = re.sub(r'\s+', ' ', text)  # Collapse multiple spaces
+    
+    # Handle line breaks properly
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        line = line.strip()
+        if line:  # Keep non-empty lines
+            cleaned_lines.append(line)
+    
+    # Join with proper spacing
+    cleaned_text = '\n'.join(cleaned_lines)
+    
+    # Fix bullet points that might have been messed up
+    cleaned_text = re.sub(r'• +', '• ', cleaned_text)
+    
+    return cleaned_text
 
 if __name__ == "__main__":
     query = input("Enter your search query: ")
@@ -167,4 +201,4 @@ if __name__ == "__main__":
     
     # Display parsed content
     print("\nPARSED CONTENT FROM TOP LINKS:")
-    print(result["parsed_content"])
+    print(result["parsed_content"][-100:])  # Uncommented this line to actually show the content
