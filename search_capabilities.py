@@ -1,28 +1,156 @@
-import requests
-from bs4 import BeautifulSoup
+import scrapy
+from scrapy.crawler import CrawlerProcess
 from duckduckgo_search import DDGS as ddg
+from scrapy.http import Request
+from scrapy.utils.project import get_project_settings
+from scrapy import signals
+from collections import defaultdict
+import logging
+from pydispatch import dispatcher
+from tqdm import tqdm
+
+class SearchSpider(scrapy.Spider):
+    name = 'search_spider'
+    
+    def __init__(self, search_results=None, *args, **kwargs):
+        super(SearchSpider, self).__init__(*args, **kwargs)
+        self.search_results = search_results or []
+        self.parsed_content = defaultdict(str)
+        self.logger.setLevel(logging.WARNING)  # Reduce log noise
+        self.progress_bar = tqdm(total=len(self.search_results), desc="Scraping websites", unit="site")
+        self.completed = 0
+
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        spider = super(SearchSpider, cls).from_crawler(crawler, *args, **kwargs)
+        crawler.signals.connect(spider.spider_closed, signal=signals.spider_closed)
+        crawler.signals.connect(spider.item_scraped, signal=signals.item_scraped)
+        crawler.signals.connect(spider.item_error, signal=signals.spider_error)
+        return spider
+    
+    def item_scraped(self, response, spider):
+        self.completed += 1
+        self.progress_bar.update(1)
+    
+    def item_error(self, failure, response, spider):
+        self.completed += 1
+        self.progress_bar.update(1)
+        
+    def start_requests(self):
+        for result in self.search_results:
+            yield Request(
+                url=result['href'],
+                callback=self.parse,
+                errback=self.handle_error,
+                meta={'title': result['title']},
+                dont_filter=True
+            )
+    
+    def parse(self, response):
+        title = response.meta.get('title')
+        
+        # Extract text from multiple HTML elements, not just paragraphs
+        content_parts = []
+        
+        # Get headings
+        for heading in response.css('h1, h2, h3, h4, h5, h6'):
+            content_parts.append(heading.css('::text').get('').strip())
+        
+        # Get paragraphs with all nested text
+        for p in response.css('p'):
+            content_parts.append(' '.join(p.css('*::text').getall()).strip())
+        
+        # Get lists
+        for li in response.css('li'):
+            content_parts.append('• ' + ' '.join(li.css('*::text').getall()).strip())
+        
+        # Get div content that might contain text
+        for div in response.css('div.content, div.article, article, section, main'):
+            # Avoid duplicating already captured text
+            div_text = ' '.join(div.css('::text').getall()).strip()
+            if div_text and div_text not in content_parts:
+                content_parts.append(div_text)
+        
+        # Filter out empty strings and join with single newlines
+        content = '\n\n'.join(part.strip() for part in content_parts if part.strip())
+        
+        # Store content with clean formatting
+        self.parsed_content[title] = f"\nFrom {title}:\n{content}\n"
+        
+        # Signal that item has been scraped (for progress bar)
+        self.crawler.signals.send_catch_log(signal=signals.item_scraped, response=response, spider=self)
+    
+    def handle_error(self, failure):
+        request = failure.request
+        title = request.meta.get('title')
+        self.logger.warning(f"Error fetching {request.url} for '{title}': {repr(failure)}")
+        
+        # Signal error for progress bar
+        self.crawler.signals.send_catch_log(signal=signals.spider_error, 
+                                           failure=failure, response=None, spider=self)
+    
+    def spider_closed(self, spider):
+        self.progress_bar.close()
 
 def search_and_parse(query, max_results=5):
-    # Get search results
-    results = ddg().text(query, max_results=max_results)
+    # Show a progress bar for the search
+    print(f"Searching for: {query}")
+    search_progress = tqdm(total=1, desc="Retrieving search results", unit="query")
     
-    # Parse content from each link
-    all_content = ""
-    for r in results:
-        try:
-            response = requests.get(r['href'], timeout=5)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                # Extract text from paragraph tags
-                paragraphs = soup.find_all('p')
-                content = ' '.join([p.get_text() for p in paragraphs])
-                all_content += f"\n\nFrom {r['title']}:\n{content[:500]}...\n"
-        except Exception as e:
-            print(f"Error fetching {r['href']}: {e}")
+    # Get search results from DuckDuckGo
+    results = ddg().text(query, max_results=max_results)
+    search_progress.update(1)
+    search_progress.close()
+    
+    if not results:
+        print("No search results found.")
+        return {"search_results": [], "parsed_content": ""}
+    
+    print(f"Found {len(results)} results. Starting content extraction...")
+    
+    # Create a container to store spider results
+    spider_results = {}
+    
+    # Define a callback function to get the results when the spider closes
+    def spider_closed(spider):
+        spider_results['parsed_content'] = spider.parsed_content
+    
+    # Register the callback to the spider_closed signal
+    dispatcher.connect(spider_closed, signal=signals.spider_closed)
+    
+    # Configure crawler settings
+    settings = get_project_settings()
+    settings.update({
+        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'CONCURRENT_REQUESTS': 16,
+        'DOWNLOAD_TIMEOUT': 15,
+        'RETRY_ENABLED': True,
+        'RETRY_TIMES': 2,
+        'RETRY_HTTP_CODES': [500, 502, 503, 504, 408, 429],
+        'LOG_LEVEL': 'ERROR',
+    })
+    
+    # Set up the crawler process
+    process = CrawlerProcess(settings)
+    
+    # Pass the spider class and its arguments separately
+    process.crawl(SearchSpider, search_results=results)
+    process.start()  # This blocks until the crawl is finished
+    
+    # Clean up the combined content
+    combined_content = ''.join(spider_results.get('parsed_content', {}).values())
+    # Remove any consecutive newlines (more than 2)
+    lines = combined_content.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        if line.strip():  # Keep non-empty lines
+            cleaned_lines.append(line)
+    
+    cleaned_content = '\n'.join(cleaned_lines)
     
     return {
         "search_results": results,
-        "parsed_content": all_content
+        "parsed_content": cleaned_content
     }
 
 if __name__ == "__main__":
