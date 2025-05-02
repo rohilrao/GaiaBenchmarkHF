@@ -1,5 +1,7 @@
 import scrapy
-from scrapy.crawler import CrawlerProcess
+from scrapy.crawler import CrawlerRunner
+from twisted.internet import asyncioreactor
+import asyncio
 from duckduckgo_search import DDGS as ddg
 from scrapy.http import Request
 from scrapy.utils.project import get_project_settings
@@ -118,12 +120,17 @@ def search_and_parse(query, max_results=5):
     
     print(f"Found {len(results)} results. Starting content extraction...")
     
+    # Initialize the asyncio reactor before importing twisted reactor
+    asyncioreactor.install()
+    from twisted.internet import reactor
+    
     # Create a container to store spider results
     spider_results = {}
     
     # Define a callback function to get the results when the spider closes
     def spider_closed(spider):
         spider_results['parsed_content'] = spider.parsed_content
+        reactor.callFromThread(reactor.stop)
     
     # Register the callback to the spider_closed signal
     dispatcher.connect(spider_closed, signal=signals.spider_closed)
@@ -140,12 +147,14 @@ def search_and_parse(query, max_results=5):
         'LOG_LEVEL': 'ERROR',
     })
     
-    # Set up the crawler process
-    process = CrawlerProcess(settings)
+    # Set up the crawler runner (not process)
+    runner = CrawlerRunner(settings)
     
-    # Pass the spider class and its arguments separately
-    process.crawl(SearchSpider, search_results=results)
-    process.start()  # This blocks until the crawl is finished
+    # Schedule spider to run
+    d = runner.crawl(SearchSpider, search_results=results)
+    
+    # Run the reactor until spider is done
+    reactor.run()
     
     # Clean up the combined content
     combined_content = ''.join(spider_results.get('parsed_content', {}).values())
