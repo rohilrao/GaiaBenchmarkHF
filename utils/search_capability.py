@@ -12,6 +12,10 @@ from pydispatch import dispatcher
 from tqdm import tqdm
 import re
 import html
+import nest_asyncio  # Import this to fix the asyncio loop issue
+
+# Apply nest_asyncio to allow nested event loops
+nest_asyncio.apply()
 
 class SearchSpider(scrapy.Spider):
     name = 'search_spider'
@@ -120,8 +124,8 @@ def search_and_parse(query, max_results=5):
     
     print(f"Found {len(results)} results. Starting content extraction...")
     
-    # Initialize the asyncio reactor before importing twisted reactor
-    asyncioreactor.install()
+    # We don't need to install the reactor anymore since we use nest_asyncio
+    # asyncioreactor.install()  # <-- This line is commented out
     from twisted.internet import reactor
     
     # Create a container to store spider results
@@ -154,7 +158,7 @@ def search_and_parse(query, max_results=5):
     d = runner.crawl(SearchSpider, search_results=results)
     
     # Run the reactor until spider is done
-    reactor.run()
+    reactor.run(installSignalHandlers=False)  # Set installSignalHandlers to False
     
     # Clean up the combined content
     combined_content = ''.join(spider_results.get('parsed_content', {}).values())
@@ -196,6 +200,19 @@ def clean_html_content(text):
     
     return cleaned_text
 
+def process_questions(questions):
+    """Process a list of questions, running search_and_parse on each."""
+    results = {}
+    for q in questions:
+        print(f"\nProcessing question: {q}")
+        result = search_and_parse(q)
+        results[q] = result
+        # Add a small delay between questions to avoid rate limiting
+        import time
+        time.sleep(1)
+    return results
+
+# Example usage:
 if __name__ == "__main__":
     query = input("Enter your search query: ")
     result = search_and_parse(query)
@@ -210,4 +227,4 @@ if __name__ == "__main__":
     
     # Display parsed content
     print("\nPARSED CONTENT FROM TOP LINKS:")
-    print(result["parsed_content"][-100:])  # Uncommented this line to actually show the content
+    print(result["parsed_content"])
