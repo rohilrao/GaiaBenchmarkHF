@@ -52,14 +52,14 @@ def read_file(filename):
         except Exception as e:
             raise Exception(f"Error reading DOC file: {e}")
     
-    elif ext == '.xlsx':
+    elif ext in ['.xlsx', '.xls', '.xlsm', '.xlsb']:
         try:
             # Read Excel file with pandas
-            df = pd.read_excel(filename)
+            df = pd.read_excel(filename, engine='openpyxl' if ext != '.xls' else 'xlrd')
             # Convert DataFrame to string representation
             return df.to_string()
         except Exception as e:
-            raise Exception(f"Error reading XLSX file: {e}")
+            raise Exception(f"Error reading Excel file: {e}")
     
     elif ext == '.html' or ext == '.htm':
         try:
