@@ -54,7 +54,7 @@ def read_file(filename):
     
     elif ext in ['.xlsx', '.xls', '.xlsm', '.xlsb']:
         try:
-            # Read Excel file with pandas
+            # Read Excel files and others with pandas
             df = pd.read_excel(filename, engine='openpyxl' if ext != '.xls' else 'xlrd')
             # Convert DataFrame to string representation
             return df.to_string()
