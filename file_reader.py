@@ -4,10 +4,11 @@ import sys
 from bs4 import BeautifulSoup
 import docx
 import mammoth
+import pandas as pd
 
 def read_file(filename):
     """
-    Read content from a file, supporting multiple formats including PDF, DOCX, DOC, HTML, and text.
+    Read content from a file, supporting multiple formats including PDF, DOCX, DOC, HTML, XLSX, and text.
     
     Args:
         filename (str): Path to the file to read
@@ -15,7 +16,6 @@ def read_file(filename):
     Returns:
         str: Content of the file
     """
-    # Check if file exists
     if not os.path.isfile(filename):
         raise FileNotFoundError(f"File not found: {filename}")
     
