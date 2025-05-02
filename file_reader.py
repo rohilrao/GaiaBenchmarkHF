@@ -16,6 +16,7 @@ def read_file(filename):
     Returns:
         str: Content of the file
     """
+    # Check if file exists
     if not os.path.isfile(filename):
         raise FileNotFoundError(f"File not found: {filename}")
     
@@ -50,6 +51,15 @@ def read_file(filename):
                 return result.value
         except Exception as e:
             raise Exception(f"Error reading DOC file: {e}")
+    
+    elif ext == '.xlsx':
+        try:
+            # Read Excel file with pandas
+            df = pd.read_excel(filename)
+            # Convert DataFrame to string representation
+            return df.to_string()
+        except Exception as e:
+            raise Exception(f"Error reading XLSX file: {e}")
     
     elif ext == '.html' or ext == '.htm':
         try:
@@ -86,5 +96,4 @@ if __name__ == "__main__":
             print(f"Error: {e}")
     else:
         print("Usage: python file_reader.py <path_to_file>")
-        
-        
+
