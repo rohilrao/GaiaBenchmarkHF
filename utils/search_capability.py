@@ -1,7 +1,5 @@
 import scrapy
 from scrapy.crawler import CrawlerRunner
-from twisted.internet import asyncioreactor
-import asyncio
 from duckduckgo_search import DDGS as ddg
 from scrapy.http import Request
 from scrapy.utils.project import get_project_settings
@@ -12,10 +10,14 @@ from pydispatch import dispatcher
 from tqdm import tqdm
 import re
 import html
-import nest_asyncio  # Import this to fix the asyncio loop issue
+import nest_asyncio  # Fix for asyncio loop in Jupyter notebooks
+import crochet  # Use crochet to handle Twisted reactor properly
 
-# Apply nest_asyncio to allow nested event loops
+# Apply nest_asyncio to allow nested event loops in Jupyter
 nest_asyncio.apply()
+
+# Initialize crochet - this will manage the Twisted reactor for us
+crochet.setup()
 
 class SearchSpider(scrapy.Spider):
     name = 'search_spider'
@@ -108,7 +110,38 @@ class SearchSpider(scrapy.Spider):
     def spider_closed(self, spider):
         self.progress_bar.close()
 
+@crochet.wrap
+def _run_spider(search_results):
+    """
+    Run the spider in a way that won't clash with Jupyter's event loop.
+    This is wrapped by crochet so we don't have to manage the reactor.
+    """
+    settings = get_project_settings()
+    settings.update({
+        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'CONCURRENT_REQUESTS': 16,
+        'DOWNLOAD_TIMEOUT': 15,
+        'RETRY_ENABLED': True,
+        'RETRY_TIMES': 2,
+        'RETRY_HTTP_CODES': [500, 502, 503, 504, 408, 429],
+        'LOG_LEVEL': 'ERROR',
+    })
+    
+    runner = CrawlerRunner(settings)
+    spider = SearchSpider(search_results=search_results)
+    deferred = runner.crawl(spider)
+    
+    def return_results(result):
+        return spider.parsed_content
+    
+    deferred.addCallback(return_results)
+    return deferred
+
 def search_and_parse(query, max_results=5):
+    """
+    Search for a query and parse the results.
+    This function is safe to use in Jupyter notebooks.
+    """
     # Show a progress bar for the search
     print(f"Searching for: {query}")
     search_progress = tqdm(total=1, desc="Retrieving search results", unit="query")
@@ -124,52 +157,25 @@ def search_and_parse(query, max_results=5):
     
     print(f"Found {len(results)} results. Starting content extraction...")
     
-    # We don't need to install the reactor anymore since we use nest_asyncio
-    # asyncioreactor.install()  # <-- This line is commented out
-    from twisted.internet import reactor
-    
-    # Create a container to store spider results
-    spider_results = {}
-    
-    # Define a callback function to get the results when the spider closes
-    def spider_closed(spider):
-        spider_results['parsed_content'] = spider.parsed_content
-        reactor.callFromThread(reactor.stop)
-    
-    # Register the callback to the spider_closed signal
-    dispatcher.connect(spider_closed, signal=signals.spider_closed)
-    
-    # Configure crawler settings
-    settings = get_project_settings()
-    settings.update({
-        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'CONCURRENT_REQUESTS': 16,
-        'DOWNLOAD_TIMEOUT': 15,
-        'RETRY_ENABLED': True,
-        'RETRY_TIMES': 2,
-        'RETRY_HTTP_CODES': [500, 502, 503, 504, 408, 429],
-        'LOG_LEVEL': 'ERROR',
-    })
-    
-    # Set up the crawler runner (not process)
-    runner = CrawlerRunner(settings)
-    
-    # Schedule spider to run
-    d = runner.crawl(SearchSpider, search_results=results)
-    
-    # Run the reactor until spider is done
-    reactor.run(installSignalHandlers=False)  # Set installSignalHandlers to False
-    
-    # Clean up the combined content
-    combined_content = ''.join(spider_results.get('parsed_content', {}).values())
-    
-    # Apply HTML cleanup
-    cleaned_content = clean_html_content(combined_content)
-    
-    return {
-        "search_results": results,
-        "parsed_content": cleaned_content
-    }
+    try:
+        # Use crochet to run the spider without reactor conflicts
+        parsed_content = _run_spider(results).wait(timeout=60)
+        
+        # Clean up the combined content
+        combined_content = ''.join(parsed_content.values())
+        cleaned_content = clean_html_content(combined_content)
+        
+        return {
+            "search_results": results,
+            "parsed_content": cleaned_content
+        }
+    except Exception as e:
+        print(f"Error during scraping: {str(e)}")
+        return {
+            "search_results": results,
+            "parsed_content": f"Error during scraping: {str(e)}",
+            "error": str(e)
+        }
 
 def clean_html_content(text):
     # Handle HTML entities
@@ -201,12 +207,19 @@ def clean_html_content(text):
     return cleaned_text
 
 def process_questions(questions):
-    """Process a list of questions, running search_and_parse on each."""
+    """
+    Process a list of questions, running search_and_parse on each.
+    Handles errors gracefully without stopping the whole process.
+    """
     results = {}
     for q in questions:
         print(f"\nProcessing question: {q}")
-        result = search_and_parse(q)
-        results[q] = result
+        try:
+            result = search_and_parse(q)
+            results[q] = result
+        except Exception as e:
+            print(f"Error processing question '{q}': {str(e)}")
+            results[q] = {"error": str(e), "search_results": [], "parsed_content": ""}
         # Add a small delay between questions to avoid rate limiting
         import time
         time.sleep(1)
