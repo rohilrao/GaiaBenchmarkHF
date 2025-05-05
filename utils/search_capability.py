@@ -1,262 +1,81 @@
-import scrapy
-from scrapy.crawler import CrawlerRunner
-from duckduckgo_search import DDGS as ddg
-from scrapy.http import Request
-from scrapy import signals
-from collections import defaultdict
-import logging
-from pydispatch import dispatcher
-from tqdm import tqdm
-import re
-import html
-import nest_asyncio
-try:
-    # Try to import crochet with the expected functionality
-    import crochet
-    if not hasattr(crochet, 'wrap'):
-        # If wrap is missing, try to use the correct import
-        from crochet import setup, run_in_reactor as wrap
-        setup()  # Initialize crochet
-    else:
-        # Normal initialization
-        crochet.setup()
-except ImportError:
-    # If crochet isn't available, we'll use a direct approach with Twisted
-    print("Crochet not found or incompatible. Using direct Twisted integration.")
-    import asyncio
-    from twisted.internet import asyncioreactor
+import requests
+from bs4 import BeautifulSoup
+from duckduckgo_search import DDGS
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+def search_web(query, max_results=5):
+    """Search DuckDuckGo and return results."""
+    print(f"Searching for: {query}")
     try:
-        asyncioreactor.install(asyncio.get_event_loop())
-    except:
-        # Reactor might already be installed
-        pass
-    
-    # Define a simple wrapper function to replace crochet.wrap
-    def wrap(f):
-        from twisted.internet import defer, reactor
-        def wrapped(*args, **kwargs):
-            d = defer.Deferred()
-            reactor.callLater(0, lambda: defer.maybeDeferred(f, *args, **kwargs).addCallbacks(d.callback, d.errback))
-            
-            # Add a wait method to mimic crochet behavior
-            def wait(timeout=None):
-                result = [None]
-                error = [None]
-                d.addCallbacks(lambda r: result.__setitem__(0, r), lambda e: error.__setitem__(0, e))
-                if not reactor.running:
-                    reactor.run(installSignalHandlers=False)
-                if error[0]:
-                    raise error[0]
-                return result[0]
-            
-            d.wait = wait
-            return d
-        return wrapped
+        results = DDGS().text(query, max_results=max_results)
+        print(f"Found {len(results)} results.")
+        return results
+    except Exception as e:
+        print(f"Error during search: {str(e)}")
+        return []
 
-# Apply nest_asyncio to allow nested event loops in Jupyter
-nest_asyncio.apply()
-
-# Define a function to get settings without using get_project_settings()
-# This helps avoid dependency on a full Scrapy project
-def get_settings():
-    from scrapy.settings import Settings
-    settings = Settings()
-    settings.update({
-        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'CONCURRENT_REQUESTS': 16,
-        'DOWNLOAD_TIMEOUT': 15,
-        'RETRY_ENABLED': True,
-        'RETRY_TIMES': 2,
-        'RETRY_HTTP_CODES': [500, 502, 503, 504, 408, 429],
-        'LOG_LEVEL': 'ERROR',
-    })
-    return settings
-
-class SearchSpider(scrapy.Spider):
-    name = 'search_spider'
-    
-    def __init__(self, search_results=None, *args, **kwargs):
-        super(SearchSpider, self).__init__(*args, **kwargs)
-        self.search_results = search_results or []
-        self.parsed_content = defaultdict(str)
-        self.logger.setLevel(logging.WARNING)  # Reduce log noise
-        self.progress_bar = tqdm(total=len(self.search_results), desc="Scraping websites", unit="site")
-        self.completed = 0
-
-    @classmethod
-    def from_crawler(cls, crawler, *args, **kwargs):
-        spider = super(SearchSpider, cls).from_crawler(crawler, *args, **kwargs)
-        crawler.signals.connect(spider.spider_closed, signal=signals.spider_closed)
-        crawler.signals.connect(spider.item_scraped, signal=signals.item_scraped)
-        crawler.signals.connect(spider.item_error, signal=signals.spider_error)
-        return spider
-    
-    def item_scraped(self, item=None, response=None, spider=None):
-        self.completed += 1
-        self.progress_bar.update(1)
-    
-    def item_error(self, failure, response, spider):
-        self.completed += 1
-        self.progress_bar.update(1)
+def extract_content(url, title=None):
+    """Extract text content from a URL using requests and BeautifulSoup."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
         
-    def start_requests(self):
-        for result in self.search_results:
-            yield Request(
-                url=result['href'],
-                callback=self.parse,
-                errback=self.handle_error,
-                meta={'title': result['title']},
-                dont_filter=True
-            )
-    
-    def parse(self, response):
-        title = response.meta.get('title')
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Extract text from multiple HTML elements, not just paragraphs
-        content_parts = []
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.extract()
         
-        # Get headings
-        for heading in response.css('h1, h2, h3, h4, h5, h6'):
-            content_parts.append(heading.css('::text').get('').strip())
+        # Extract all text
+        text = soup.get_text(separator='\n')
         
-        # Get paragraphs with all nested text
-        for p in response.css('p'):
-            content_parts.append(' '.join(p.css('*::text').getall()).strip())
+        # Clean text
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        text = '\n\n'.join(lines)
         
-        # Get lists
-        for li in response.css('li'):
-            content_parts.append('• ' + ' '.join(li.css('*::text').getall()).strip())
-        
-        # Get div content that might contain text
-        for div in response.css('div.content, div.article, article, section, main'):
-            # Avoid duplicating already captured text
-            div_text = ' '.join(div.css('::text').getall()).strip()
-            if div_text and div_text not in content_parts:
-                content_parts.append(div_text)
-        
-        # Filter out empty strings and join with single newlines
-        content = '\n\n'.join(part.strip() for part in content_parts if part.strip())
-        
-        # Store content with clean formatting
-        self.parsed_content[title] = f"\nFrom {title}:\n{content}\n"
-        
-        # Create a dummy item to satisfy the signal requirements
-        dummy_item = {}
-        
-        # Signal that item has been scraped (for progress bar)
-        self.crawler.signals.send_catch_log(
-            signal=signals.item_scraped, 
-            item=dummy_item,
-            response=response, 
-            spider=self
-        )
-    
-    def handle_error(self, failure):
-        request = failure.request
-        title = request.meta.get('title')
-        self.logger.warning(f"Error fetching {request.url} for '{title}': {repr(failure)}")
-        
-        # Signal error for progress bar
-        self.crawler.signals.send_catch_log(signal=signals.spider_error, 
-                                           failure=failure, response=None, spider=self)
-    
-    def spider_closed(self, spider):
-        self.progress_bar.close()
-
-# Use the wrap function (either from crochet or our fallback)
-@wrap
-def _run_spider(search_results):
-    """
-    Run the spider in a way that won't clash with Jupyter's event loop.
-    This is wrapped by crochet so we don't have to manage the reactor.
-    """
-    # Use our custom settings function instead of get_project_settings()
-    settings = get_settings()
-    
-    runner = CrawlerRunner(settings)
-    spider = SearchSpider(search_results=search_results)
-    deferred = runner.crawl(spider)
-    
-    def return_results(result):
-        return spider.parsed_content
-    
-    deferred.addCallback(return_results)
-    return deferred
+        return f"\nFrom {title or url}:\n{text}\n"
+    except Exception as e:
+        return f"\nError extracting content from {url}: {str(e)}\n"
 
 def search_and_parse(query, max_results=5):
-    """
-    Search for a query and parse the results.
-    This function is safe to use in Jupyter notebooks.
-    """
-    # Show a progress bar for the search
-    print(f"Searching for: {query}")
-    search_progress = tqdm(total=1, desc="Retrieving search results", unit="query")
-    
-    # Get search results from DuckDuckGo
-    results = ddg().text(query, max_results=max_results)
-    search_progress.update(1)
-    search_progress.close()
+    """Search and extract content in parallel."""
+    # Get search results
+    results = search_web(query, max_results)
     
     if not results:
-        print("No search results found.")
         return {"search_results": [], "parsed_content": ""}
     
-    print(f"Found {len(results)} results. Starting content extraction...")
+    print("Extracting content from search results...")
     
-    try:
-        # Use crochet to run the spider without reactor conflicts
-        parsed_content = _run_spider(results).wait(timeout=60)
-        
-        # Clean up the combined content
-        combined_content = ''.join(parsed_content.values())
-        cleaned_content = clean_html_content(combined_content)
-        
-        return {
-            "search_results": results,
-            "parsed_content": cleaned_content
+    # Use ThreadPoolExecutor for parallel processing
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit tasks for each URL
+        future_to_url = {
+            executor.submit(extract_content, result['href'], result['title']): result
+            for result in results
         }
-    except Exception as e:
-        print(f"Error during scraping: {str(e)}")
-        return {
-            "search_results": results,
-            "parsed_content": f"Error during scraping: {str(e)}",
-            "error": str(e)
-        }
-
-def clean_html_content(text):
-    # Handle HTML entities
-    text = html.unescape(text)
+        
+        # Collect results as they complete
+        contents = []
+        for future in future_to_url:
+            try:
+                content = future.result()
+                if content:
+                    contents.append(content)
+            except Exception as e:
+                print(f"Error processing result: {str(e)}")
     
-    # Remove any remaining HTML tags
-    text = re.sub(r'<[^>]+>', '', text)
-    
-    # Remove strange Unicode characters that might be from HTML
-    text = re.sub(r'[\u2028\u2029\ufeff]', ' ', text)
-    
-    # Fix common formatting issues
-    text = re.sub(r'\s+', ' ', text)  # Collapse multiple spaces
-    
-    # Handle line breaks properly
-    lines = text.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        line = line.strip()
-        if line:  # Keep non-empty lines
-            cleaned_lines.append(line)
-    
-    # Join with proper spacing
-    cleaned_text = '\n'.join(cleaned_lines)
-    
-    # Fix bullet points that might have been messed up
-    cleaned_text = re.sub(r'• +', '• ', cleaned_text)
-    
-    return cleaned_text
+    return {
+        "search_results": results,
+        "parsed_content": ''.join(contents)
+    }
 
 def process_questions(questions):
-    """
-    Process a list of questions, running search_and_parse on each.
-    Handles errors gracefully without stopping the whole process.
-    """
+    """Process a list of questions."""
     results = {}
     for q in questions:
         print(f"\nProcessing question: {q}")
@@ -266,12 +85,11 @@ def process_questions(questions):
         except Exception as e:
             print(f"Error processing question '{q}': {str(e)}")
             results[q] = {"error": str(e), "search_results": [], "parsed_content": ""}
-        # Add a small delay between questions to avoid rate limiting
-        import time
+        # Add a small delay between questions
         time.sleep(1)
     return results
 
-# Example usage:
+# Example usage
 if __name__ == "__main__":
     query = input("Enter your search query: ")
     result = search_and_parse(query)
