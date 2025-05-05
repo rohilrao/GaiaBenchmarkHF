@@ -2,7 +2,6 @@ import scrapy
 from scrapy.crawler import CrawlerRunner
 from duckduckgo_search import DDGS as ddg
 from scrapy.http import Request
-from scrapy.utils.project import get_project_settings
 from scrapy import signals
 from collections import defaultdict
 import logging
@@ -10,14 +9,68 @@ from pydispatch import dispatcher
 from tqdm import tqdm
 import re
 import html
-import nest_asyncio  # Fix for asyncio loop in Jupyter notebooks
-import crochet  # Use crochet to handle Twisted reactor properly
+import nest_asyncio
+try:
+    # Try to import crochet with the expected functionality
+    import crochet
+    if not hasattr(crochet, 'wrap'):
+        # If wrap is missing, try to use the correct import
+        from crochet import setup, run_in_reactor as wrap
+        setup()  # Initialize crochet
+    else:
+        # Normal initialization
+        crochet.setup()
+except ImportError:
+    # If crochet isn't available, we'll use a direct approach with Twisted
+    print("Crochet not found or incompatible. Using direct Twisted integration.")
+    import asyncio
+    from twisted.internet import asyncioreactor
+    try:
+        asyncioreactor.install(asyncio.get_event_loop())
+    except:
+        # Reactor might already be installed
+        pass
+    
+    # Define a simple wrapper function to replace crochet.wrap
+    def wrap(f):
+        from twisted.internet import defer, reactor
+        def wrapped(*args, **kwargs):
+            d = defer.Deferred()
+            reactor.callLater(0, lambda: defer.maybeDeferred(f, *args, **kwargs).addCallbacks(d.callback, d.errback))
+            
+            # Add a wait method to mimic crochet behavior
+            def wait(timeout=None):
+                result = [None]
+                error = [None]
+                d.addCallbacks(lambda r: result.__setitem__(0, r), lambda e: error.__setitem__(0, e))
+                if not reactor.running:
+                    reactor.run(installSignalHandlers=False)
+                if error[0]:
+                    raise error[0]
+                return result[0]
+            
+            d.wait = wait
+            return d
+        return wrapped
 
 # Apply nest_asyncio to allow nested event loops in Jupyter
 nest_asyncio.apply()
 
-# Initialize crochet - this will manage the Twisted reactor for us
-crochet.setup()
+# Define a function to get settings without using get_project_settings()
+# This helps avoid dependency on a full Scrapy project
+def get_settings():
+    from scrapy.settings import Settings
+    settings = Settings()
+    settings.update({
+        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'CONCURRENT_REQUESTS': 16,
+        'DOWNLOAD_TIMEOUT': 15,
+        'RETRY_ENABLED': True,
+        'RETRY_TIMES': 2,
+        'RETRY_HTTP_CODES': [500, 502, 503, 504, 408, 429],
+        'LOG_LEVEL': 'ERROR',
+    })
+    return settings
 
 class SearchSpider(scrapy.Spider):
     name = 'search_spider'
@@ -110,22 +163,15 @@ class SearchSpider(scrapy.Spider):
     def spider_closed(self, spider):
         self.progress_bar.close()
 
-@crochet.wrap
+# Use the wrap function (either from crochet or our fallback)
+@wrap
 def _run_spider(search_results):
     """
     Run the spider in a way that won't clash with Jupyter's event loop.
     This is wrapped by crochet so we don't have to manage the reactor.
     """
-    settings = get_project_settings()
-    settings.update({
-        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'CONCURRENT_REQUESTS': 16,
-        'DOWNLOAD_TIMEOUT': 15,
-        'RETRY_ENABLED': True,
-        'RETRY_TIMES': 2,
-        'RETRY_HTTP_CODES': [500, 502, 503, 504, 408, 429],
-        'LOG_LEVEL': 'ERROR',
-    })
+    # Use our custom settings function instead of get_project_settings()
+    settings = get_settings()
     
     runner = CrawlerRunner(settings)
     spider = SearchSpider(search_results=search_results)
