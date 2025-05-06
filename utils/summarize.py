@@ -77,7 +77,7 @@ def reduce_text(text_list, max_context_size=2500, model='deepseek-r1:32b', show_
         The text appears to be from file #{i+1} of {len(text_list)}.
         
         Original text:
-        {text[:10000]}  # Limit input size to prevent token overflow
+        {text[:30000]}  # Limit input size to prevent token overflow
         
         Provide ONLY the summarized text without any meta commentary.
         """
@@ -231,7 +231,7 @@ if __name__ == "__main__":
     result = reduce_text(articles, max_context_size=2500)
     print(f"Result length: {len(result)}")
     print(f"Result is under max context: {len(result) <= 2500}")
-    print(f"First 100 characters: {result[:100]}...")
+    print(f"First 100 characters: {result}...")
     
     # Test with real text to demonstrate it works with actual content
     real_articles = [
