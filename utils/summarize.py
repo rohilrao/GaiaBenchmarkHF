@@ -33,9 +33,17 @@ def reduce_text(text_list, max_context_size=2500, model='deepseek-r1:32b', show_
         return concatenated[:max_context_size]
     
     # Calculate individual summary target lengths based on original proportions
+    # Allow some buffer for dividers (100 chars per article)
+    divider_space = min(100 * len(text_list), max_context_size * 0.1)
+    available_space = max_context_size - divider_space
+    
     proportions = [len(text) / total_input_len for text in text_list]
-    # Allow 90% of max_context for individual summaries, reserve 10% for final reduction if needed
-    individual_targets = [int(p * max_context_size * 0.9) for p in proportions]
+    individual_targets = [max(200, int(p * available_space)) for p in proportions]
+    
+    # If sum of targets is too large, scale them down
+    if sum(individual_targets) > available_space:
+        scale_factor = available_space / sum(individual_targets)
+        individual_targets = [max(100, int(target * scale_factor)) for target in individual_targets]
     
     # Summarize each text individually
     individual_summaries = []
@@ -57,6 +65,7 @@ def reduce_text(text_list, max_context_size=2500, model='deepseek-r1:32b', show_
             continue
         
         # Prepare prompt for individual summarization
+        # Make sure each summary preserves the original content characteristics
         prompt = f"""
         I need you to summarize the following text to approximately {target_length} characters.
         Focus on preserving:
@@ -65,8 +74,10 @@ def reduce_text(text_list, max_context_size=2500, model='deepseek-r1:32b', show_
         3. Critical context
         4. Essential points and conclusions
         
+        The text appears to be from file #{i+1} of {len(text_list)}.
+        
         Original text:
-        {text}
+        {text[:10000]}  # Limit input size to prevent token overflow
         
         Provide ONLY the summarized text without any meta commentary.
         """
@@ -79,20 +90,11 @@ def reduce_text(text_list, max_context_size=2500, model='deepseek-r1:32b', show_
         
         # Call the Ollama model
         try:
-            # Do a simple spinner animation without threading
+            # Show spinner
             if show_progress:
-                counter = 0
-                while True:
-                    elapsed = time.time() - start_time
-                    if elapsed > 0.1:  # Update every 0.1 seconds
-                        sys.stdout.write("\rSummarizing file {0} {1} ".format(
-                            i+1, spinner_chars[counter % len(spinner_chars)]))
-                        sys.stdout.flush()
-                        counter += 1
-                        start_time = time.time()
-                    # Check if we should break out for API call
-                    if counter > 3:  # Do a few spins then make the call
-                        break
+                sys.stdout.write("\rSummarizing file {0} {1} ".format(
+                    i+1, spinner_chars[0]))
+                sys.stdout.flush()
             
             # Make the actual API call
             start_time = time.time()
@@ -101,23 +103,14 @@ def reduce_text(text_list, max_context_size=2500, model='deepseek-r1:32b', show_
                 messages=[{'role': 'user', 'content': prompt}]
             )
             
-            # Continue spinner while waiting
-            if show_progress:
-                counter = 0
-                while response is None and counter < 1000:  # Safety limit
-                    elapsed = time.time() - start_time
-                    if elapsed > 0.1:
-                        sys.stdout.write("\rSummarizing file {0} {1} ".format(
-                            i+1, spinner_chars[counter % len(spinner_chars)]))
-                        sys.stdout.flush()
-                        counter += 1
-                        start_time = time.time()
-            
             summary = response['message']['content'].strip()
             
-            # Ensure summary isn't longer than original text
-            if len(summary) > len(text):
-                summary = text[:target_length] + "..."
+            # Add file identifier to help debugging
+            summary = f"[Summary of file {i+1}]\n{summary}"
+            
+            # Ensure summary isn't too long
+            if len(summary) > target_length * 1.2:  # Allow some flexibility
+                summary = summary[:target_length] + "..."
             
             individual_summaries.append(summary)
             
@@ -135,7 +128,7 @@ def reduce_text(text_list, max_context_size=2500, model='deepseek-r1:32b', show_
                 main_progress.update(1)
             
             # Fall back to simple truncation on error
-            individual_summaries.append(text[:target_length] + "...")
+            individual_summaries.append(f"[Summary of file {i+1} (truncated due to error)]\n{text[:target_length]}...")
     
     # Check if concatenated individual summaries fit within max context
     concatenated_summaries = "\n\n---\n\n".join(individual_summaries)
@@ -156,40 +149,29 @@ def reduce_text(text_list, max_context_size=2500, model='deepseek-r1:32b', show_
     # Final summarization prompt
     final_prompt = f"""
     I need you to summarize these already-summarized articles in approximately {final_target} characters.
-    These are already condensed summaries, so focus on preserving the most important:
-    1. Facts and statistics
-    2. Key figures and values
-    3. Critical conclusions
+    These are already condensed summaries, so focus on preserving the most important points from EACH file.
+    It's critical that the final summary contains information from EVERY article.
     
     The summaries are separated by "---" dividers.
     
     Summaries to condense:
-    {concatenated_summaries}
+    {concatenated_summaries[:25000]}  # Limit input size
     
     Provide ONLY the summarized text without any meta commentary.
+    Make sure to preserve information from ALL {len(individual_summaries)} files.
     """
     
     # Create spinner for final summarization
     if show_progress:
         print("Final summarization in progress...", end='', flush=True)
         spinner_chars = "|/-\\"
-        counter = 0
         start_time = time.time()
     
     try:
-        # Simple spinner animation without threading
+        # Simple spinner animation
         if show_progress:
-            while True:
-                elapsed = time.time() - start_time
-                if elapsed > 0.1:
-                    sys.stdout.write("\rFinal summarization in progress... {0} ".format(
-                        spinner_chars[counter % len(spinner_chars)]))
-                    sys.stdout.flush()
-                    counter += 1
-                    start_time = time.time()
-                # Break after a few spins
-                if counter > 3:
-                    break
+            sys.stdout.write("\rFinal summarization in progress... {0} ".format(spinner_chars[0]))
+            sys.stdout.flush()
         
         # Make the API call
         start_time = time.time()
@@ -219,21 +201,30 @@ def reduce_text(text_list, max_context_size=2500, model='deepseek-r1:32b', show_
         if show_progress:
             sys.stdout.write("\r" + " " * 50 + "\r")  # Clear the spinner line
             print(f"Error in final summarization: {e}")
-            print(f"Falling back to truncation of concatenated summaries")
+            print(f"Falling back to concatenation and truncation")
         
-        # Fall back to truncation of the concatenated summaries
-        return concatenated_summaries[:max_context_size - 3] + "..."
+        # Try a simpler approach: just concatenate the first parts of each summary
+        fallback_summary = ""
+        chars_per_summary = max(50, int(max_context_size / len(individual_summaries)) - 10)
+        
+        for i, summary in enumerate(individual_summaries):
+            # Extract the first part of each summary
+            excerpt = summary[:chars_per_summary].strip()
+            fallback_summary += f"[File {i+1}] {excerpt}\n\n"
+        
+        # Ensure we're under the limit
+        return fallback_summary[:max_context_size]
 
 
 # Example usage
 if __name__ == "__main__":
-    # Example with 5 articles of different lengths
+    # Example with 5 articles of different lengths and different content
     articles = [
-        "A" * 1000,  # 1000-character article
-        "B" * 1000,  # 1000-character article
-        "C" * 2000,  # 2000-character article
-        "D" * 3000,  # 3000-character article
-        "E" * 2000   # 2000-character article
+        "E" * 1000,  # 1000-character article of E's
+        "A" * 1000,  # 1000-character article of A's
+        "X" * 2000,  # 2000-character article of X's
+        "Y" * 3000,  # 3000-character article of Y's
+        "Z" * 2000   # 2000-character article of Z's
     ]
     
     # Total length: 9000 characters, max context: 2500
@@ -241,40 +232,17 @@ if __name__ == "__main__":
     print(f"Result length: {len(result)}")
     print(f"Result is under max context: {len(result) <= 2500}")
     print(f"First 100 characters: {result[:100]}...")
-
-
-# Example usage
-if __name__ == "__main__":
-    # Example with 5 articles of different lengths
-    articles = [
-        "A" * 1000,  # 1000-character article
-        "B" * 1000,  # 1000-character article
-        "C" * 2000,  # 2000-character article
-        "D" * 3000,  # 3000-character article
-        "E" * 2000   # 2000-character article
+    
+    # Test with real text to demonstrate it works with actual content
+    real_articles = [
+        "Climate change is a pressing global issue. Rising temperatures are causing melting ice caps, rising sea levels, and extreme weather events. Countries around the world are struggling to implement effective policies to reduce carbon emissions. The Paris Agreement aims to limit global warming to well below 2 degrees Celsius.",
+        "Artificial intelligence has made significant advances in recent years. Machine learning models can now perform tasks that were once thought to require human intelligence. These include image recognition, natural language processing, and even creative tasks like art and music generation.",
+        "Space exploration continues to push the boundaries of human knowledge. Recent missions to Mars have provided valuable data about the red planet. Private companies are now playing a larger role in space missions alongside traditional government agencies."
     ]
     
-    # Total length: 9000 characters, max context: 2500
-    result = reduce_text(articles, max_context_size=2500)
-    print(f"Result length: {len(result)}")
-    print(f"Result is under max context: {len(result) <= 2500}")
-    print(f"First 100 characters: {result[:100]}...")
-
-
-# Example usage
-if __name__ == "__main__":
-    # Example with 5 articles of different lengths
-    articles = [
-        "A" * 1000,  # 1000-character article
-        "B" * 1000,  # 1000-character article
-        "C" * 2000,  # 2000-character article
-        "D" * 3000,  # 3000-character article
-        "E" * 2000   # 2000-character article
-    ]
-    
-    # Total length: 9000 characters, max context: 2500
-    result = reduce_text(articles, max_context_size=2500)
-    print(f"Result length: {len(result)}")
-    print(f"Result is under max context: {len(result) <= 2500}")
-    print(f"First 100 characters: {result[:100]}...")
-    print(result)
+    # Process real articles
+    real_result = reduce_text(real_articles, max_context_size=500)
+    print("\n\nReal articles example:")
+    print(f"Result length: {len(real_result)}")
+    print(f"Result is under max context: {len(real_result) <= 500}")
+    print(f"Full result:\n{real_result}")
