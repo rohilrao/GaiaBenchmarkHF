@@ -237,7 +237,7 @@ if __name__ == "__main__":
         text=long_text,
         target_len=600,         # Target length in characters
         chunk_size=3000,        # Smaller chunks
-        truncate=True,          # Enforce exact length limit
+        truncate=False,          # Enforce exact length limit
         model="llama3:8b",      # Use a different model
         temperature=0.5         # Slightly more creative
     )
