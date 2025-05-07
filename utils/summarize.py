@@ -117,7 +117,23 @@ def _chunk_text(text: str, chunk_size: int) -> List[str]:
     # Add the last chunk if it's not empty
     if current_chunk:
         chunks.append(current_chunk)
-        
+    
+    # Handle case where text is shorter than chunk_size but has no paragraphs
+    if not chunks and text:
+        words = text.split()
+        current_chunk = ""
+        for word in words:
+            if len(current_chunk) + len(word) + 1 > chunk_size and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = word
+            else:
+                if current_chunk:
+                    current_chunk += " " + word
+                else:
+                    current_chunk = word
+        if current_chunk:
+            chunks.append(current_chunk)
+            
     return chunks
 
 def _recursive_summarize(
@@ -144,8 +160,31 @@ def _recursive_summarize(
     Returns:
         A summary of the entire text
     """
-    # Split text into chunks
-    chunks = _chunk_text(text, chunk_size)
+    # Split text into chunks - fixing the chunking issue
+    paragraphs = text.split('\n\n')
+    chunks = []
+    current_chunk = ""
+    
+    for paragraph in paragraphs:
+        # If adding this paragraph exceeds chunk size, start a new chunk
+        if len(current_chunk) + len(paragraph) > chunk_size and current_chunk:
+            chunks.append(current_chunk)
+            current_chunk = paragraph
+        else:
+            if current_chunk:
+                current_chunk += "\n\n" + paragraph
+            else:
+                current_chunk = paragraph
+    
+    # Add the last chunk if it's not empty
+    if current_chunk:
+        chunks.append(current_chunk)
+    
+    # If no paragraphs were found, force chunking by character count
+    if len(chunks) <= 1 and len(text) > chunk_size:
+        chunks = []
+        for i in range(0, len(text), chunk_size):
+            chunks.append(text[i:i+chunk_size])
     
     if show_progress:
         if depth == 0:
