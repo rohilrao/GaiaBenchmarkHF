@@ -8,7 +8,8 @@ def summarize_text(
     chunk_size: int = 8000,
     truncate: bool = False,
     model: str = 'qwen2.5:72b', 
-    temperature: float = 0.3
+    temperature: float = 0.3,
+    show_progress: bool = True
 ) -> str:
     """
     Summarize text string using a language model with optional chunking.
@@ -20,24 +21,32 @@ def summarize_text(
         truncate: If True, truncate final summary to target_len
         model: The language model to use
         temperature: Controls randomness (lower = more deterministic)
+        show_progress: Whether to print progress updates during summarization
     
     Returns:
         A summary of the input text
     """
     # For short texts, summarize directly
     if len(text) <= chunk_size:
+        if show_progress:
+            print("Text is short enough to summarize directly (no chunking needed)")
         summary = _summarize_chunk(text, target_len, model, temperature)
     else:
         # For longer texts, use chunking strategy
-        summary = _recursive_summarize(text, target_len, chunk_size, model, temperature)
+        summary = _recursive_summarize(text, target_len, chunk_size, model, temperature, show_progress)
     
     # Apply truncation if requested
     if truncate and len(summary) > target_len:
+        if show_progress:
+            print(f"Truncating summary from {len(summary)} to {target_len} characters")
         summary = summary[:target_len]
         # Try to avoid cutting off in the middle of a word
         last_space = summary.rfind(' ')
         if last_space > 0.9 * target_len:  # Only if we're not losing too much
             summary = summary[:last_space]
+    
+    if show_progress:
+        print(f"Summarization complete. Final summary length: {len(summary)} characters")
     
     return summary
 
@@ -116,7 +125,9 @@ def _recursive_summarize(
     target_len: int, 
     chunk_size: int,
     model: str, 
-    temperature: float
+    temperature: float,
+    show_progress: bool,
+    depth: int = 0
 ) -> str:
     """
     Summarize large texts by chunking and recursively summarizing.
@@ -127,6 +138,8 @@ def _recursive_summarize(
         chunk_size: Maximum character count per chunk
         model: The language model to use
         temperature: Controls randomness
+        show_progress: Whether to print progress updates
+        depth: Current recursion depth (for progress reporting)
     
     Returns:
         A summary of the entire text
@@ -134,23 +147,42 @@ def _recursive_summarize(
     # Split text into chunks
     chunks = _chunk_text(text, chunk_size)
     
+    if show_progress:
+        if depth == 0:
+            print(f"Text split into {len(chunks)} chunks for processing")
+        else:
+            print(f"Recursive level {depth}: Split into {len(chunks)} chunks")
+    
     # Calculate proportional length for intermediate summaries
     # We use a larger size for intermediate summaries to preserve information
     intermediate_len = min(target_len * 2, 1800)  # ~300 words
     
     # Summarize each chunk
     chunk_summaries = []
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks):
+        if show_progress:
+            print(f"Processing chunk {i+1}/{len(chunks)} (length: {len(chunk)} characters)")
+        
         summary = _summarize_chunk(chunk, intermediate_len, model, temperature)
         chunk_summaries.append(summary)
+        
+        if show_progress:
+            print(f"Chunk {i+1} summarized to {len(summary)} characters")
     
     # Combine intermediate summaries
     combined_summary = "\n\n".join(chunk_summaries)
     
+    if show_progress:
+        print(f"Combined {len(chunks)} chunk summaries into {len(combined_summary)} characters")
+    
     # Create final summary if combined summary is still too large
     if len(combined_summary) > chunk_size:
-        return _recursive_summarize(combined_summary, target_len, chunk_size, model, temperature)
+        if show_progress:
+            print(f"Combined summary still too large ({len(combined_summary)} > {chunk_size}). Recursively summarizing...")
+        return _recursive_summarize(combined_summary, target_len, chunk_size, model, temperature, show_progress, depth + 1)
     else:
+        if show_progress:
+            print("Creating final summary...")
         return _summarize_chunk(combined_summary, target_len, model, temperature)
     
 if __name__ == "__main__":
