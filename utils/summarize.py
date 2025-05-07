@@ -152,14 +152,22 @@ def _recursive_summarize(
         return _recursive_summarize(combined_summary, target_len, chunk_size, model, temperature)
     else:
         return _summarize_chunk(combined_summary, target_len, model, temperature)
-
-# Example usage
+    
 if __name__ == "__main__":
-    text = "A"*1500 + "B"*1500 + "C"*4000 + "D"*4000
-    summary = summarize_text(
-        text=text,
-        target_len=900, 
-        chunk_size=8000,
-        truncate=True
+    # Example long text
+    long_text = "A"*4000 + "B"*4000 + "C"*4000 + "D"*4000 + "E"*4000
+    
+    # Basic usage with defaults
+    summary = summarize_text(long_text)
+    print("Default summary:", summary)
+    
+    # Advanced usage with custom parameters
+    custom_summary = summarize_text(
+        text=long_text,
+        target_len=600,         # Target length in characters
+        chunk_size=3000,        # Smaller chunks
+        truncate=True,          # Enforce exact length limit
+        model="llama3:8b",      # Use a different model
+        temperature=0.5         # Slightly more creative
     )
-    print(summary)
+    print("Custom summary:", custom_summary)
