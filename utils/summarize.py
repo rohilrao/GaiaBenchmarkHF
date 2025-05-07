@@ -211,6 +211,8 @@ def _recursive_summarize(
     # Combine intermediate summaries
     combined_summary = "\n\n".join(chunk_summaries)
     
+    return combined_summary
+    '''
     if show_progress:
         print(f"Combined {len(chunks)} chunk summaries into {len(combined_summary)} characters")
     
@@ -223,14 +225,10 @@ def _recursive_summarize(
         if show_progress:
             print("Creating final summary...")
         return _summarize_chunk(combined_summary, target_len, model, temperature)
-    
+    '''
 if __name__ == "__main__":
     # Example long text
     long_text = "A"*4000 + "B"*4000 + "C"*4000 + "D"*4000 + "E"*4000
-    
-    # Basic usage with defaults
-    summary = summarize_text(long_text)
-    print("Default summary:", summary)
     
     # Advanced usage with custom parameters
     custom_summary = summarize_text(
