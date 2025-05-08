@@ -134,10 +134,17 @@ def process_single_example(example):
     search_results = {}
     try:
         search_results = search_and_parse(question)
+        parsed_content = search_results.get('parsed_content', '')
+        
+        # Check if search returned too much content and truncate if needed
+        if len(parsed_content) > 50000:
+            print(f"Search returned {len(parsed_content)} characters, truncating to 50000")
+            parsed_content = parsed_content[:50000]
+            search_results['parsed_content'] = parsed_content
+            
         print(f"Completed search with {len(search_results.get('parsed_content', ''))} characters of content")
     except Exception as e:
         print(f"Error during search: {e}")
-    
     # Step 3: Summarize file content and search results
     summarized_file_content = ""
     if file_content:
