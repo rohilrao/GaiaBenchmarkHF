@@ -130,6 +130,7 @@ def process_single_example(example):
             print(f"Error reading file {file_name}: {e}")
     
     # Step 2: Perform web search
+    # Issue of too much data being returned from web search needs to be handled
     search_results = {}
     try:
         search_results = search_and_parse(question)
@@ -175,6 +176,23 @@ def process_single_example(example):
     if summarized_search_content:
         combined_context += f"## Search Context:\n{summarized_search_content}"
     
+    # Check if combined context exceeds 30,000 characters and re-summarize if needed
+    if len(combined_context) > 30000:
+        print(f"Combined context too large ({len(combined_context)} chars). Re-summarizing...")
+        try:
+            combined_context = summarize_text(
+                text=combined_context,
+                target_len=25000,  # Aim for less than 30,000 with some margin
+                chunk_size=15000,
+                truncate=True,
+                model="llama3:8b",
+                temperature=0
+            )
+            print(f"Re-summarized combined context: {len(combined_context)} characters")
+        except Exception as e:
+            print(f"Error re-summarizing combined context: {e}")
+            # If re-summarization fails, truncate manually as a fallback
+            combined_context = combined_context[:30000] + "... [content truncated]"
     # Step 5: Generate the first answer using a more powerful model
     raw_answer = ""
     try:
