@@ -1,52 +1,203 @@
+# Add this code to a new cell in your notebook
+import time
+import random
 import requests
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
-import time
-import random  
 from concurrent.futures import ThreadPoolExecutor
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
-
-def search_web(query, max_results=5, max_retries=3):
-    """Search DuckDuckGo and return results with exponential backoff for rate limiting."""
-    print(f"Searching for: {query}")
+class WebSearcher:
+    """A comprehensive web search utility with multiple backends and automatic fallback."""
     
-    # Start with base delay of 2 seconds
-    base_delay = 2
+    def __init__(self):
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36'
+        ]
     
-    for attempt in range(max_retries):
+    def search_with_googlesearch(self, query, max_results=5):
+        """Search using googlesearch-python library."""
         try:
-            # Add a small random component to the delay to avoid synchronized requests
-            jitter = random.uniform(0.1, 0.5)
-            current_delay = base_delay + jitter
+            # Dynamically import to avoid errors if not installed
+            from googlesearch import search
             
-            if attempt > 0:
-                print(f"Retry attempt {attempt}/{max_retries} after {current_delay:.2f}s delay")
+            print("Searching with googlesearch-python...")
+            # Add random delay before search
+            time.sleep(random.uniform(1, 3))
             
-            time.sleep(current_delay)
+            search_results = []
+            for url in search(query, num_results=max_results):
+                # Get page title and snippet by fetching a bit of content
+                title = url
+                snippet = ""
+                try:
+                    headers = {'User-Agent': random.choice(self.user_agents)}
+                    response = requests.get(url, headers=headers, timeout=5)
+                    if response.status_code == 200:
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        title = soup.title.string if soup.title else url
+                        # Get first paragraph or snippet of text
+                        first_p = soup.find('p')
+                        snippet = first_p.get_text().strip()[:150] + "..." if first_p else ""
+                except Exception:
+                    # If we can't get extra info, just use the URL
+                    pass
+                    
+                search_results.append({
+                    'href': url,
+                    'title': title,
+                    'body': snippet
+                })
+                # Small delay between result processing
+                time.sleep(0.5)
+            
+            print(f"Found {len(search_results)} results with googlesearch-python.")
+            return search_results
+        except Exception as e:
+            print(f"googlesearch-python error: {str(e)}")
+            return None
+    
+    def search_with_ddgs(self, query, max_results=5):
+        """Search using DDGS library."""
+        try:
+            # Dynamically import to avoid errors if not installed
+            from duckduckgo_search import DDGS
+            
+            print("Searching with DDGS...")
+            # Add random delay before search
+            time.sleep(random.uniform(2, 4))
+            
             results = DDGS().text(query, max_results=max_results)
-            print(f"Found {len(results)} results.")
+            if results:
+                print(f"Found {len(results)} results with DDGS.")
+                return list(results)  # Convert generator to list
+            return None
+        except Exception as e:
+            print(f"DDGS error: {str(e)}")
+            return None
+    
+    def search_with_selenium(self, query, max_results=5):
+        """Search using Selenium with headless Chrome."""
+        print("Searching with Selenium...")
+        try:
+            # Configure headless Chrome
+            chrome_options = Options()
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument(f"--user-agent={random.choice(self.user_agents)}")
+            
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+            
+            # Go to Google and search
+            driver.get(f"https://www.google.com/search?q={query}")
+            time.sleep(random.uniform(2, 4))  # Wait for results to load
+            
+            # Extract search results
+            results = []
+            elements = driver.find_elements(By.CSS_SELECTOR, ".g")
+            
+            for i, element in enumerate(elements):
+                if i >= max_results:
+                    break
+                    
+                try:
+                    link_element = element.find_element(By.CSS_SELECTOR, "a")
+                    link = link_element.get_attribute("href")
+                    
+                    # Get title from h3 element
+                    title_element = element.find_element(By.CSS_SELECTOR, "h3")
+                    title = title_element.text if title_element else link
+                    
+                    # Get snippet
+                    snippet = ""
+                    try:
+                        snippet_element = element.find_element(By.CSS_SELECTOR, ".VwiC3b")
+                        snippet = snippet_element.text
+                    except:
+                        pass
+                    
+                    if link and not link.startswith('https://webcache.googleusercontent'):
+                        results.append({
+                            'href': link,
+                            'title': title,
+                            'body': snippet
+                        })
+                except Exception as e:
+                    print(f"Error extracting result: {str(e)}")
+                    continue
+                    
+            driver.quit()
+            print(f"Found {len(results)} results with Selenium.")
             return results
             
         except Exception as e:
-            error_message = str(e).lower()
+            print(f"Selenium search error: {str(e)}")
+            return None
+
+    def search_web(self, query, max_results=5, max_retries=3):
+        """
+        Search the web using multiple methods with fallback.
+        
+        Args:
+            query: Search query string
+            max_results: Maximum number of results to return
+            max_retries: Maximum number of retry attempts
             
-            # Check for rate limiting errors specifically
-            if "rate" in error_message or "limit" in error_message or "429" in error_message:
-                # Exponential backoff - double the delay for each retry
-                base_delay *= 2
-                print(f"Rate limit detected. Backing off for {base_delay}s before retry.")
-            else:
-                print(f"Error during search: {str(e)}")
-                if attempt == max_retries - 1:
-                    return []  # Return empty results after all retries
-    
-    print("Exceeded maximum retry attempts")
-    return []
+        Returns:
+            List of search results or empty list if all methods fail
+        """
+        print(f"Searching for: {query}")
+        
+        # Try different search methods in sequence
+        search_methods = [
+            self.search_with_ddgs,        # Try DDGS first (fastest when it works)
+            self.search_with_googlesearch, # Then try googlesearch-python
+            self.search_with_selenium      # Finally try Selenium (most reliable but heaviest)
+        ]
+        
+        for attempt in range(max_retries):
+            if attempt > 0:
+                print(f"Retry attempt {attempt+1}/{max_retries}")
+                
+            # Add increasing delay between retries
+            delay = (attempt + 1) * 2 + random.uniform(0, 1)
+            if attempt > 0:
+                print(f"Waiting {delay:.2f}s before retry...")
+                time.sleep(delay)
+            
+            # Try each search method until one succeeds
+            for method in search_methods:
+                results = method(query, max_results)
+                if results:
+                    return results
+                
+                # Small delay between trying different methods
+                time.sleep(1)
+                
+        print("All search methods failed after retries.")
+        return []
+
+# Initialize the searcher
+web_searcher = WebSearcher()
+
+# Function to maintain compatibility with existing code
+def search_web(query, max_results=5, max_retries=3):
+    return web_searcher.search_web(query, max_results, max_retries)
+
+# Replace extract_content and search_and_parse functions with these updated versions
+
 def extract_content(url, title=None):
     """Extract text content from a URL using requests and BeautifulSoup."""
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': random.choice(web_searcher.user_agents)
         }
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -101,34 +252,13 @@ def search_and_parse(query, max_results=5):
         "parsed_content": ''.join(contents)
     }
 
-def process_questions(questions):
-    """Process a list of questions."""
-    results = {}
-    for q in questions:
-        print(f"\nProcessing question: {q}")
-        try:
-            result = search_and_parse(q)
-            results[q] = result
-        except Exception as e:
-            print(f"Error processing question '{q}': {str(e)}")
-            results[q] = {"error": str(e), "search_results": [], "parsed_content": ""}
-        # Add a small delay between questions
-        time.sleep(1)
+# Example usage
+def main():
+    # Test the new search function
+    results = search_and_parse("eliud kipchoge top speed", max_results=3)
+    print(f"Found {len(results['search_results'])} results.")
+    print(f"Content length: {len(results['parsed_content'])} characters")
     return results
 
-# Example usage
 if __name__ == "__main__":
-    query = input("Enter your search query: ")
-    result = search_and_parse(query)
-    
-    # Display search results
-    print("\nSEARCH RESULTS:")
-    for r in result["search_results"]:
-        print(f"Title: {r['title']}")
-        print(f"URL: {r['href']}")
-        print(f"Snippet: {r['body']}")
-        print("-" * 20)
-    
-    # Display parsed content
-    print("\nPARSED CONTENT FROM TOP LINKS:")
-    print(result["parsed_content"])
+    main()
