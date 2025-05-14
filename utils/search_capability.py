@@ -153,8 +153,9 @@ class WebSearcher:
             
             print("Searching with SerpAPI...")
             # You should set your API key as an environment variable
-            api_key = "YOUR_SERPAPI_API_KEY"  # Replace with your actual key or use os.environ.get("SERPAPI_API_KEY")
-            
+            import os
+            api_key = os.getenv("SERPAPI_API_KEY")
+
             params = {
                 "engine": "google",
                 "q": query,
