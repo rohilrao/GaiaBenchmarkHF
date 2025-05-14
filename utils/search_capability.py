@@ -4,10 +4,12 @@ from duckduckgo_search import DDGS
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+
 def search_web(query, max_results=5):
     """Search DuckDuckGo and return results."""
     print(f"Searching for: {query}")
     try:
+        time.sleep(2)  # Add a delay to avoid rate-limiting
         results = DDGS().text(query, max_results=max_results)
         print(f"Found {len(results)} results.")
         return results
