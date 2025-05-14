@@ -2,21 +2,46 @@ import requests
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 import time
+import random  
 from concurrent.futures import ThreadPoolExecutor
 
 
-def search_web(query, max_results=5):
-    """Search DuckDuckGo and return results."""
+def search_web(query, max_results=5, max_retries=3):
+    """Search DuckDuckGo and return results with exponential backoff for rate limiting."""
     print(f"Searching for: {query}")
-    try:
-        time.sleep(2)  # Add a delay to avoid rate-limiting
-        results = DDGS().text(query, max_results=max_results)
-        print(f"Found {len(results)} results.")
-        return results
-    except Exception as e:
-        print(f"Error during search: {str(e)}")
-        return []
-
+    
+    # Start with base delay of 2 seconds
+    base_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            # Add a small random component to the delay to avoid synchronized requests
+            jitter = random.uniform(0.1, 0.5)
+            current_delay = base_delay + jitter
+            
+            if attempt > 0:
+                print(f"Retry attempt {attempt}/{max_retries} after {current_delay:.2f}s delay")
+            
+            time.sleep(current_delay)
+            results = DDGS().text(query, max_results=max_results)
+            print(f"Found {len(results)} results.")
+            return results
+            
+        except Exception as e:
+            error_message = str(e).lower()
+            
+            # Check for rate limiting errors specifically
+            if "rate" in error_message or "limit" in error_message or "429" in error_message:
+                # Exponential backoff - double the delay for each retry
+                base_delay *= 2
+                print(f"Rate limit detected. Backing off for {base_delay}s before retry.")
+            else:
+                print(f"Error during search: {str(e)}")
+                if attempt == max_retries - 1:
+                    return []  # Return empty results after all retries
+    
+    print("Exceeded maximum retry attempts")
+    return []
 def extract_content(url, title=None):
     """Extract text content from a URL using requests and BeautifulSoup."""
     try:
