@@ -1,4 +1,3 @@
-# Add this code to a new cell in your notebook
 import time
 import random
 import requests
@@ -12,6 +11,15 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 class WebSearcher:
     """A comprehensive web search utility with multiple backends and automatic fallback."""
+    # Singleton instance
+    _instance = None
+    
+    @classmethod
+    def get_instance(cls):
+        """Get or create the singleton instance."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
     
     def __init__(self):
         self.user_agents = [
@@ -28,7 +36,6 @@ class WebSearcher:
             from googlesearch import search
             
             print("Searching with googlesearch-python...")
-            # Add random delay before search
             time.sleep(random.uniform(1, 3))
             
             search_results = []
@@ -54,7 +61,6 @@ class WebSearcher:
                     'title': title,
                     'body': snippet
                 })
-                # Small delay between result processing
                 time.sleep(0.5)
             
             print(f"Found {len(search_results)} results with googlesearch-python.")
@@ -70,7 +76,6 @@ class WebSearcher:
             from duckduckgo_search import DDGS
             
             print("Searching with DDGS...")
-            # Add random delay before search
             time.sleep(random.uniform(2, 4))
             
             results = DDGS().text(query, max_results=max_results)
@@ -140,8 +145,42 @@ class WebSearcher:
         except Exception as e:
             print(f"Selenium search error: {str(e)}")
             return None
+    
+    def search_with_serpapi(self, query, max_results=5):
+        """Search using SerpAPI as a last resort."""
+        try:
+            from serpapi import GoogleSearch
+            
+            print("Searching with SerpAPI...")
+            # You should set your API key as an environment variable
+            api_key = "YOUR_SERPAPI_API_KEY"  # Replace with your actual key or use os.environ.get("SERPAPI_API_KEY")
+            
+            params = {
+                "engine": "google",
+                "q": query,
+                "api_key": api_key,
+                "num": max_results
+            }
+            
+            search = GoogleSearch(params)
+            results = search.get_dict()
+            
+            if "organic_results" in results:
+                formatted_results = []
+                for result in results["organic_results"][:max_results]:
+                    formatted_results.append({
+                        'href': result.get('link', ''),
+                        'title': result.get('title', ''),
+                        'body': result.get('snippet', '')
+                    })
+                print(f"Found {len(formatted_results)} results with SerpAPI.")
+                return formatted_results
+            return None
+        except Exception as e:
+            print(f"SerpAPI error: {str(e)}")
+            return None
 
-    def search_web(self, query, max_results=5, max_retries=3):
+    def search(self, query, max_results=5, max_retries=3):
         """
         Search the web using multiple methods with fallback.
         
@@ -157,9 +196,10 @@ class WebSearcher:
         
         # Try different search methods in sequence
         search_methods = [
-            self.search_with_ddgs,        # Try DDGS first (fastest when it works)
-            self.search_with_googlesearch, # Then try googlesearch-python
-            self.search_with_selenium      # Finally try Selenium (most reliable but heaviest)
+            self.search_with_ddgs,         # Try DDGS first (fastest when it works)
+            self.search_with_googlesearch,  # Then try googlesearch-python
+            self.search_with_selenium,      # Then try Selenium (reliable but heavy)
+            self.search_with_serpapi        # Finally try SerpAPI as last resort
         ]
         
         for attempt in range(max_retries):
@@ -184,20 +224,12 @@ class WebSearcher:
         print("All search methods failed after retries.")
         return []
 
-# Initialize the searcher
-web_searcher = WebSearcher()
-
-# Function to maintain compatibility with existing code
-def search_web(query, max_results=5, max_retries=3):
-    return web_searcher.search_web(query, max_results, max_retries)
-
-# Replace extract_content and search_and_parse functions with these updated versions
 
 def extract_content(url, title=None):
     """Extract text content from a URL using requests and BeautifulSoup."""
     try:
         headers = {
-            'User-Agent': random.choice(web_searcher.user_agents)
+            'User-Agent': random.choice(WebSearcher.get_instance().user_agents)
         }
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -219,10 +251,12 @@ def extract_content(url, title=None):
     except Exception as e:
         return f"\nError extracting content from {url}: {str(e)}\n"
 
+
 def search_and_parse(query, max_results=5):
     """Search and extract content in parallel."""
     # Get search results
-    results = search_web(query, max_results)
+    searcher = WebSearcher.get_instance()
+    results = searcher.search(query, max_results)
     
     if not results:
         return {"search_results": [], "parsed_content": ""}
@@ -252,9 +286,10 @@ def search_and_parse(query, max_results=5):
         "parsed_content": ''.join(contents)
     }
 
+
 # Example usage
 def main():
-    # Test the new search function
+    # Test the search function
     results = search_and_parse("eliud kipchoge top speed", max_results=3)
     print(f"Found {len(results['search_results'])} results.")
     print(f"Content length: {len(results['parsed_content'])} characters")
