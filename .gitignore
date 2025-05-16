@@ -16,6 +16,8 @@ logs/
 *.npz
 
 # Compressed files
+*.pkl
+*.pickle
 *.zip
 *.gz
 *.tar
