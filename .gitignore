@@ -7,6 +7,7 @@ processed_data/
 cache/
 checkpoints/
 logs/
+*.log
 
 # Large file formats that should be ignored
 *.csv
