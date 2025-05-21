@@ -4,7 +4,7 @@ from tqdm import tqdm
 
 def load_gaia_datasets(levels=None, loader_path="../GAIA.py", split="validation"):
     """
-    Load GAIA datasets for specified levels as a dictionary.
+    Load GAIA datasets for spcified levels as a dictionary.
     
     Args:
         levels: List of dataset levels to load (if None, loads all available levels)
