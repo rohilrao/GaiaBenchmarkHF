@@ -2,14 +2,14 @@
 # https://ominousindustries.com/blogs/ominous-industries/a-demo-of-magentic-one-agents-working-with-ollama-and-llama-3-2-vision?utm_source=chatgpt.com
 
 # Import necessary modules
-from magentic_one import Agent, Orchestrator
-from ollama import OllamaClient
+from autogen_ext.teams.magentic_one import MagenticOne, Orchestrator
+from autogen_ext.models.ollama import OllamaChatCompletionClient
 
-# Initialize the Ollama client
-ollama_client = OllamaClient(server_url="http://localhost:8000")
+# Initialize the Ollama client with the required model parameter
+ollama_client = OllamaChatCompletionClient(server_url="http://localhost:11434", model="llama3.1:8b")
 
 # Define a simple agent using Magentic One
-class VisionAgent(Agent):
+class VisionAgent(MagenticOne):
     def __init__(self, name, ollama_client):
         super().__init__(name)
         self.ollama_client = ollama_client
@@ -28,6 +28,6 @@ orchestrator.add_agent(vision_agent)
 
 # Example usage
 if __name__ == "__main__":
-    input_data = "Describe the content of the image."
+    input_data = "Say hello if you are there."
     result = orchestrator.run(input_data)
     print("Result:", result)
