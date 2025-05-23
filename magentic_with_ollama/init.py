@@ -1,0 +1,2 @@
+# Implement a simple agent that uses Ollama and Llama 3.2 Vision
+# https://ominousindustries.com/blogs/ominous-industries/a-demo-of-magentic-one-agents-working-with-ollama-and-llama-3-2-vision?utm_source=chatgpt.com
