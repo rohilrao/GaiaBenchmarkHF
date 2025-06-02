@@ -1,3 +1,4 @@
+# fixes #12
 from autogen import AssistantAgent, UserProxyAgent
 
 config_list = [
