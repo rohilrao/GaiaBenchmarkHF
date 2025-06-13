@@ -70,7 +70,7 @@ Note: There is an associated file for this task (task_{task_id}_file) that may b
     
     return enhanced_question
 
-def run_agent_on_dataset(dataset_folder="dataset", save_results=True, max_questions=None):
+def run_agent_on_dataset(dataset_folder="dataset", save_results=True, max_questions=None, output_manager=None):
     """Run the agent on all questions in the GAIA dataset."""
     
     # Load questions
@@ -134,10 +134,27 @@ def run_agent_on_dataset(dataset_folder="dataset", save_results=True, max_questi
     
     # Save results if requested
     if save_results:
-        results_file = os.path.join(dataset_folder, "agent_results.json")
+        # Use experiment folder if output_manager is provided, otherwise use dataset folder
+        if output_manager and hasattr(output_manager, 'log_dir'):
+            results_file = os.path.join(output_manager.log_dir, "agent_results.json")
+            answers_file = os.path.join(output_manager.log_dir, "answers_for_submission.json")
+        else:
+            results_file = os.path.join(dataset_folder, "agent_results.json")
+            answers_file = os.path.join(dataset_folder, "answers_for_submission.json")
+        
+        # Save detailed results
         with open(results_file, 'w') as f:
             json.dump(results, f, indent=2)
-        print(f"\nResults saved to {results_file}")
+        print(f"\nDetailed results saved to {results_file}")
+        
+        # Save answers in submission format (compatible with the API)
+        submission_answers = [
+            {"task_id": r["task_id"], "submitted_answer": r["submitted_answer"]} 
+            for r in results if r["status"] == "success"
+        ]
+        with open(answers_file, 'w') as f:
+            json.dump(submission_answers, f, indent=2)
+        print(f"Submission-ready answers saved to {answers_file}")
     
     # Print summary
     successful = sum(1 for r in results if r["status"] == "success")
@@ -289,7 +306,7 @@ class OutputManager:
 if __name__ == "__main__":
     # Option 1: Run with experiment name (creates organized folders)
     output_manager = OutputManager(
-        experiment_name="Five Question Test", 
+        experiment_name="Test2Results - Naive Baseline",    
         console_output=False
     )
     
@@ -305,16 +322,15 @@ if __name__ == "__main__":
     try:
         # Test with a single question first
         # print("Testing with first question...")
-        # run_single_question(0, "../dataset")
+        # run_single_question(0)
         
         # Uncomment to run on multiple questions (this will take time!)
-        print("\nRunning on first 5 questions...")
-        results = run_agent_on_dataset(dataset_folder="../dataset", max_questions=5)
-
-
+        #print("\nRunning on first 2 questions...")
+        #results = run_agent_on_dataset(max_questions=2, dataset_folder="../dataset", output_manager=output_manager)
+        
         # Uncomment to run on all questions (this will take a long time!)
-        # print("\nRunning on all questions...")
-        # results = run_agent_on_dataset()
+        print("\nRunning on all questions...")
+        results = run_agent_on_dataset(dataset_folder="../dataset", output_manager=output_manager)
         
     except KeyboardInterrupt:
         print("\nProcess interrupted by user")
